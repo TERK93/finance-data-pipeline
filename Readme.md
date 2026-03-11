@@ -1,38 +1,55 @@
 # Finance Data Pipeline
 
-End-to-end financial market data pipeline that ingests live stock data from Yahoo Finance, stores it in PostgreSQL, and transforms it through a medallion architecture into analytics-ready datasets.
+End-to-end financial market data pipeline built with **Python + PostgreSQL** using a **Medallion Architecture (Landing → Bronze → Silver → Gold)**.
+
+Features:
+- Incremental ingestion from Yahoo Finance
+- Data quality validation layer
+- Dimensional modeling (`dim_ticker`)
+- Analytics-ready gold views
+- Modular ETL pipeline
 
 ---
 
 ## Architecture
 
-┌─────────────────────────────────────────────────────┐
-│                  Yahoo Finance API                   │
-└──────────────────────────┬──────────────────────────┘
-                           │  fetch_stocks.py
+![Pipeline Architecture](screenshots/architecture.png)
+
+Pipeline implements a **Medallion Architecture** where data flows through
+Landing → Bronze → Silver → Gold layers.
+
+
+```
+                    Yahoo Finance API
+                           │
+                           │ fetch_stocks.py
                            ▼
-┌─────────────────────────────────────────────────────┐
-│  🥉  LANDING   landing_stock_prices                  │
-│      Raw OHLCV data — incremental daily load         │
-└──────────────────────────┬──────────────────────────┘
-                           │  load_bronze.py
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  🥉  BRONZE    bronze_stock_prices                   │
-│      Full history — append-only + load_date          │
-└──────────────────────────┬──────────────────────────┘
-                           │  load_silver.py
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  🥈  SILVER    silver_stock_prices                   │
-│      Validated — quality flags + status column       │
-└──────────────────────────┬──────────────────────────┘
-                           │  load_gold.py
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  🥇  GOLD      gold_* views (11 st)                  │
-│      Analytics-ready — returns, MA, volatility...    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│ 🥉 LANDING                               │
+│ table: landing_stock_prices              │
+│ Raw OHLCV data (incremental load)        │
+└──────────────────────┬───────────────────┘
+                       │ load_bronze.py
+                       ▼
+┌──────────────────────────────────────────┐
+│ 🥉 BRONZE                                │
+│ table: bronze_stock_prices               │
+│ Append-only history + load_date          │
+└──────────────────────┬───────────────────┘
+                       │ load_silver.py
+                       ▼
+┌──────────────────────────────────────────┐
+│ 🥈 SILVER                                │
+│ table: silver_stock_prices               │
+│ Data validation + quality flags          │
+└──────────────────────┬───────────────────┘
+                       │ load_gold.py
+                       ▼
+┌──────────────────────────────────────────┐
+│ 🥇 GOLD                                  │
+│ views: gold_* (11 analytics views)       │
+│ Returns · Moving averages · Volatility   │
+└──────────────────────────────────────────┘
 
 ---
 
@@ -107,6 +124,18 @@ End-to-end financial market data pipeline that ingests live stock data from Yaho
 | gold_sector_comparison | Tech vs Finance vs Consumer |
 | gold_correlation | Price correlation between tickers |
 | gold_best_worst_performers | 30-day return ranking |
+
+## Example Query
+
+```sql
+SELECT
+    ticker,
+    date,
+    daily_return
+FROM gold_daily_returns
+WHERE ticker = 'NVDA'
+ORDER BY date DESC
+LIMIT 10;
 
 ---
 
