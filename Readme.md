@@ -171,7 +171,7 @@ can be consumed in a reporting or analytics layer.
 
 ### Moving Averages & Volatility
 
-![Moving Average](screenshots/dashboard_moving_average.png.png)
+![Moving Average](screenshots/dashboard_moving_average.png)
 
 
 ---
