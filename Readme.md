@@ -1,13 +1,19 @@
 # Finance Data Pipeline
 
-End-to-end financial market data pipeline built with **Python + PostgreSQL** using a **Medallion Architecture (Landing → Bronze → Silver → Gold)**.
+An end-to-end data pipeline that ingests daily stock market data from Yahoo Finance and transforms it through a Medallion Architecture (Landing → Bronze → Silver → Gold) into analytics-ready views in PostgreSQL.
 
-Features:
-- Incremental ingestion from Yahoo Finance
-- Data quality validation layer
-- Dimensional modeling (`dim_ticker`)
-- Analytics-ready gold views
-- Modular ETL pipeline
+The pipeline runs incrementally, validates data quality at each layer, and exposes 11 SQL views designed for BI and exploratory analysis.
+
+Working with financial market data introduces engineering considerations that generic medallion demos rarely address — such as excluding incomplete intraday data, handling non-trading days in incremental loads, and calculating rolling metrics like drawdown and volatility that require strictly ordered time-series data.
+
+## What this project demonstrates
+
+- API data ingestion from an external source
+- Incremental loading based on warehouse state
+- Medallion architecture design
+- Data quality validation with status flags
+- Idempotent pipeline behavior
+- Time-series analytics using SQL window functions
 
 ---
 
@@ -15,41 +21,38 @@ Features:
 
 ![Pipeline Architecture](screenshots/architecture.png)
 
-Pipeline implements a **Medallion Architecture** where data flows through
-Landing → Bronze → Silver → Gold layers.
+Data flows through five steps, each with a clear responsibility:
 
+| Step | Script | Table / Object | Purpose |
+|---|---|---|---|
+| 1 | `fetch_stocks.py` | `landing_stock_prices` | Fetch raw OHLCV from Yahoo Finance API |
+| 2 | `load_bronze.py` | `bronze_stock_prices` | Append-only historical store |
+| 3 | `load_silver.py` | `silver_stock_prices` | Data quality validation + status flags |
+| 4 | `load_dimensions.py` | `dim_ticker` | Company metadata (name, sector, industry) |
+| 5 | `load_gold.py` | `gold_*` (11 views) | Analytics-ready SQL views |
+
+---
+
+## Data Model
 
 ```
-                    Yahoo Finance API
-                           │
-                           │ fetch_stocks.py
-                           ▼
-┌──────────────────────────────────────────┐
-│ 🥉 LANDING                               │
-│ table: landing_stock_prices              │
-│ Raw OHLCV data (incremental load)        │
-└──────────────────────┬───────────────────┘
-                       │ load_bronze.py
-                       ▼
-┌──────────────────────────────────────────┐
-│ 🥉 BRONZE                                │
-│ table: bronze_stock_prices               │
-│ Append-only history + load_date          │
-└──────────────────────┬───────────────────┘
-                       │ load_silver.py
-                       ▼
-┌──────────────────────────────────────────┐
-│ 🥈 SILVER                                │
-│ table: silver_stock_prices               │
-│ Data validation + quality flags          │
-└──────────────────────┬───────────────────┘
-                       │ load_gold.py
-                       ▼
-┌──────────────────────────────────────────┐
-│ 🥇 GOLD                                  │
-│ views: gold_* (11 analytics views)       │
-│ Returns · Moving averages · Volatility   │
-└──────────────────────────────────────────┘
+dim_ticker
+    ticker (PK)
+    company_name
+    sector
+    industry
+    currency
+         │
+         │ JOIN on ticker
+         ▼
+silver_stock_prices
+    date, ticker, open, high, low, close, volume
+    load_date, status (valid / invalid_*)
+         │
+         │ filtered WHERE status = 'valid'
+         ▼
+gold_* views (11 analytics views)
+```
 
 ---
 
@@ -57,89 +60,94 @@ Landing → Bronze → Silver → Gold layers.
 
 | Tool | Purpose |
 |---|---|
-| Python | Ingestion and pipeline logic |
-| yfinance | Yahoo Finance API |
+| Python | Pipeline logic and orchestration |
+| yfinance | Yahoo Finance API client |
 | pandas | Data manipulation |
-| SQLAlchemy | Python → PostgreSQL connection |
-| PostgreSQL | Database |
+| SQLAlchemy | Python → PostgreSQL interface |
+| PostgreSQL | Database (all layers) |
 | DBeaver | Database GUI |
-| dbt | Transformations (coming) |
-| Apache Airflow | Orchestration (coming) |
-| Power BI | Visualization (coming) |
 
 ---
 
-## Data
+## Dataset
 
-**Tickers:** MSFT, GOOGL, AMZN, NVDA, META, SPOT, TSLA, JPM, V
-
-**Fields:** date, ticker, open, high, low, close, volume
-
-**History:** 2 years of daily OHLCV data
-
-**Incremental load:** runs daily, fetches only new data
-
----
-
-## Medallion Architecture
-
-**Landing** —  Staging area. Replaced on every run, always reflects the latest API fetch. No history kept.     
-
-**Bronze** — Copies from landing and adds load_date timestamp. Append-only, history preserved forever.
-
-**Silver** — Reads from bronze, runs data quality checks:
-- Null check on close and open
-- Price validation (must be > 0)
-- High must be ≥ low
-- Volume must be positive
-- Each row flagged with status = valid or error code
-
-**Gold** — SQL views on top of silver. No data duplication.
+- **Tickers:** MSFT, GOOGL, AMZN, NVDA, META, SPOT, TSLA, JPM, V
+- **Sectors:** Technology, Consumer, Finance
+- **Fields:** date, open, high, low, close, volume
+- **History:** ~2 years of daily OHLCV data
+- **Approx. rows:** ~4k validated rows in silver (~2 years of daily data)
+- **Update frequency:** Daily incremental load
 
 ---
 
 ## Key Design Decisions
 
-- **Incremental load** — only new data is fetched each run, avoiding unnecessary API calls and duplicate data
-- **Append-only bronze** — full history preserved forever with load_date for full auditability
-- **Status flagging in silver** — invalid rows are flagged, not deleted, preserving data lineage
-- **Gold as views** — no data duplication, always reflects latest silver data
-- **Exclude current day** — avoids loading incomplete intraday data
-- **Unique constraints on (ticker, date)** — prevents duplicates across all layers
+**Incremental load based on bronze MAX(date)**
+Each run checks the latest date already in bronze and fetches only new data from the API. Landing is always replaced (staging), bronze is never touched after insert.
 
---- 
+**Append-only bronze with idempotent inserts**
+Bronze uses `INSERT ... ON CONFLICT DO NOTHING` against a unique constraint on `(ticker, date)`. Re-running the pipeline never creates duplicates — a deliberate choice over truncate-and-reload.
+
+**Status flagging in silver, not deletion**
+Invalid rows are flagged with a status code (`invalid_null`, `invalid_price`, `invalid_high_low`, `invalid_close_range`, `invalid_volume`) and kept in the table. Data lineage is preserved; gold views filter on `WHERE status = 'valid'`.
+
+**Gold as SQL views, not tables**
+No data duplication. Views always reflect the latest validated silver data without requiring a separate load step.
+
+**Exclude current day**
+`end_date` is set to yesterday to avoid loading partial intraday data that would produce misleading analytics.
+
+**Centralized config**
+`config.py` holds database connection, ticker list and logging setup. One change propagates across the entire pipeline.
+
+---
 
 ## Gold Views
 
-| View | Description |
+| View | What it answers |
 |---|---|
-| gold_daily_returns | Daily % return per ticker |
-| gold_moving_average | 30 and 90 day moving averages |
-| gold_performance_summary | YTD, 1M, 3M returns per ticker |
-| gold_cumulative_returns | Cumulative return since start |
-| gold_volatility | Rolling 30-day standard deviation |
-| gold_drawdown | % drop from all-time high |
-| gold_monthly_volume | Volume aggregated by month |
-| gold_volume_vs_price | Volume signals vs price |
-| gold_sector_comparison | Tech vs Finance vs Consumer |
-| gold_correlation | Price correlation between tickers |
-| gold_best_worst_performers | 30-day return ranking |
+| `gold_daily_returns` | What was each ticker's daily % return? |
+| `gold_moving_average` | Where are 30-day and 90-day moving averages? |
+| `gold_performance_summary` | YTD, 1-month and 3-month return per ticker |
+| `gold_cumulative_returns` | Total return since first data point |
+| `gold_volatility` | Rolling 30-day standard deviation |
+| `gold_drawdown` | % drop from historical peak price |
+| `gold_monthly_volume` | Average and total volume by month |
+| `gold_volume_vs_price` | Volume spikes flagged as `high_volume` signal |
+| `gold_sector_comparison` | Relative performance: Tech vs Finance vs Consumer |
+| `gold_correlation` | Pairwise return correlation between all tickers |
+| `gold_best_worst_performers` | 30-day return ranking across all tickers |
 
-## Example Query
+---
+
+## Example Queries
 
 ```sql
-SELECT
-    ticker,
-    date,
-    daily_return
+-- Which tickers had the highest return over the last 30 days?
+SELECT ticker, company_name, return_30d_pct, rank_best
+FROM gold_best_worst_performers
+ORDER BY rank_best;
+
+-- How correlated are NVDA and MSFT?
+SELECT ticker_a, ticker_b, correlation
+FROM gold_correlation
+WHERE (ticker_a = 'NVDA' AND ticker_b = 'MSFT')
+   OR (ticker_a = 'MSFT' AND ticker_b = 'NVDA');
+
+-- What is NVDA's daily return for the last 10 trading days?
+SELECT ticker, date, daily_return_pct
 FROM gold_daily_returns
 WHERE ticker = 'NVDA'
 ORDER BY date DESC
 LIMIT 10;
+```
 
 ---
 
 ## Screenshots
+
+### Pipeline Architecture
+![Architecture](screenshots/architecture.png)
 
 ### Silver Layer — Validated OHLCV Data
 ![Silver Data](screenshots/silver_data.png)
@@ -147,39 +155,41 @@ LIMIT 10;
 ### Gold Layer — Performance Summary
 ![Performance Summary](screenshots/gold_performance_summary.png)
 
-### Gold Layer — Best & Worst Performers
+### Gold Layer — Best & Worst Performers (30-day)
 ![Best Worst Performers](screenshots/gold_best_worst_performers.png)
+
+---
 
 ## Setup
 
 **Prerequisites**
 - Python 3.x
-- PostgreSQL
-- DBeaver (optional)
+- PostgreSQL running locally
+- DBeaver (optional, for browsing data)
 
 **Install dependencies**
-```
+```bash
 pip install -r requirements.txt
 ```
 
 **Configure environment**
 
-Create a `.env` file in the root folder:
+Copy `.env.example` to `.env` and fill in your credentials:
 ```
 DB_USER=postgres
 DB_PASSWORD=your_password
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=market_data_pipeline
-``` 
-
-**Run the pipeline**
 ```
+
+**Run the full pipeline**
+```bash
 python run_pipeline.py
 ```
 
-Or run each step manually:
-```
+**Or run each step individually**
+```bash
 python fetch_stocks.py
 python load_bronze.py
 python load_silver.py
@@ -187,22 +197,47 @@ python load_dimensions.py
 python load_gold.py
 ```
 
+**Expected output**
+```
+2026-03-16 14:15:18 [INFO] Incremental run — loading from 2026-03-14
+2026-03-16 14:15:19 [INFO] Rows fetched: 9
+2026-03-16 14:15:19 [INFO] Landing loaded: 9 rows — staging area refreshed.
+2026-03-16 14:15:20 [INFO] Bronze loaded: 9 new rows inserted, 0 duplicates skipped.
+2026-03-16 14:15:21 [INFO] Validation complete — valid: 9, invalid: 0
+2026-03-16 14:15:21 [INFO] Silver loaded: 9 rows.
+2026-03-16 14:15:22 [INFO] dim_ticker upserted successfully — 9 tickers loaded.
+2026-03-16 14:15:24 [INFO] All 11 gold views created successfully.
+2026-03-16 14:15:24 [INFO] Pipeline completed in 5 seconds.
+```
+
 ---
 
-## Project Status
+## Known Limitations & Tradeoffs
 
-| Layer | Status |
-|---|---|
-| Landing | ✅ Done |
-| Bronze | ✅ Done |
-| Silver | ✅ Done |
-| Gold views | ✅ Done |
-| dim_ticker | ✅ Done |
-| run_pipeline.py | ✅ Done |
-| GitHub | 🔲 Coming |
-| Power BI dashboard | 🔲 Coming |
-| dbt models | 🔲 Coming |
-| Airflow orchestration | 🔲 Coming |
+- **Yahoo Finance is a free public API** — not an enterprise data source. Suitable for learning and portfolio projects; not production-grade for financial systems.
+- **Daily granularity only** — intraday data would require a paid API and significantly more storage.
+- **No orchestration** — the pipeline is triggered manually. Scheduling via Airflow or cron is a natural next step.
+- **Silver validation runs in Python** — for larger datasets this would move into SQL or dbt tests.
+- **Nine tickers** — a deliberate scope decision to keep the project focused rather than comprehensive.
+
+---
+
+## Recent Improvements
+
+**Centralized configuration (`config.py`)**
+Extracted database connection, ticker list and logging setup into a single module. Previously each script duplicated the same environment variable reads and engine creation.
+
+**Set-based insert in bronze (`load_bronze.py`)**
+Replaced a row-by-row Python loop (`iterrows()`) with a single `INSERT INTO bronze SELECT FROM landing ON CONFLICT DO NOTHING`. Eliminates unnecessary round-trips to the database regardless of dataset size. Volume column also corrected from `FLOAT` to `BIGINT`.
+
+**Structured logging**
+Replaced all `print()` statements with Python's `logging` module. Every log line now includes a timestamp and severity level, making pipeline behavior traceable without reading source code.
+
+**Error handling in fetch**
+Added `try/except` around the Yahoo Finance API call and per-ticker column validation. If a ticker is missing from the API response it is logged and skipped rather than crashing the entire fetch.
+
+**Additional OHLCV validation in silver**
+Added a check that closing price falls within the day's high/low range (`low ≤ close ≤ high`). Parameterized the bronze query to replace an f-string with a proper bound parameter.
 
 ---
 
@@ -212,15 +247,4 @@ python load_gold.py
 - [ ] dbt for silver/gold transformations
 - [ ] Apache Airflow for daily scheduling
 - [ ] Docker containerization
-- [ ] Unit tests for quality checks
-
----
-
-## Why This Project
-
-Built to demonstrate end-to-end data engineering skills:
-- Live API ingestion with incremental load logic
-- Medallion architecture (landing → bronze → silver → gold)
-- Data quality validation with status flagging
-- Analytics-ready models for business intelligence
-- Production-minded design with environment variables and single entrypoint
+- [ ] Unit tests for validation logic
