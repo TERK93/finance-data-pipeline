@@ -158,6 +158,22 @@ LIMIT 10;
 ### Gold Layer — Best & Worst Performers (30-day)
 ![Best Worst Performers](screenshots/gold_best_worst_performers.png)
 
+## Dashboard Example
+
+Example dashboard built on top of the **Gold layer**.
+
+This demonstrates how the analytics-ready views produced by the pipeline
+can be consumed in a reporting or analytics layer.
+
+### Pipeline Overview
+
+![Dashboard Overview](screenshots/dashboard_overview.png)
+
+### Moving Averages & Volatility
+
+![Moving Average](screenshots/dashboard_moving_average.png)
+
+
 ---
 
 ## Setup
@@ -241,10 +257,13 @@ Added a check that closing price falls within the day's high/low range (`low ≤
 
 ---
 
-## Roadmap
+## Possible Extensions
 
-- [ ] Power BI dashboard connected to gold views
-- [ ] dbt for silver/gold transformations
-- [ ] Apache Airflow for daily scheduling
-- [ ] Docker containerization
-- [ ] Unit tests for validation logic
+The current pipeline is intentionally kept lightweight for a portfolio project.
+Several natural extensions could evolve it toward a production-style data platform:
+
+- **Power BI dashboard** connected directly to the gold analytics views
+- **dbt models and tests** to move silver/gold transformations into a modern analytics workflow
+- **Apache Airflow orchestration** for scheduled daily pipeline runs
+- **Docker containerization** to simplify deployment and reproducibility
+- **Unit tests** for validation logic and pipeline components
