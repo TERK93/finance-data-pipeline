@@ -156,7 +156,7 @@ LIMIT 10;
 ![Performance Summary](screenshots/gold_performance_summary.png)
 
 ### Gold Layer — Best & Worst Performers (30-day)
-![Best Worst Performers](screenshots/gold_best_worst_performers.png)
+![Best Worst Performers](screenshots/gold_best_worst_performance.png)
 
 ## Dashboard Example
 
@@ -171,7 +171,7 @@ can be consumed in a reporting or analytics layer.
 
 ### Moving Averages & Volatility
 
-![Moving Average](screenshots/dashboard_moving_average.png)
+![Moving Average](screenshots/dashboard_moving_average.png.png)
 
 
 ---
