@@ -1,58 +1,67 @@
+import yfinance as yf
 import pandas as pd
-from sqlalchemy import create_engine, text
-from datetime import datetime
-from dotenv import load_dotenv
-import os
+from sqlalchemy import text
+from datetime import datetime, timedelta
+from config import get_engine, TICKERS, logger
 
-load_dotenv()
+engine = get_engine()
 
-# --- Settings ---
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-
-engine = create_engine(f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
-
-# --- Create bronze table if it doesn't exist ---
-with engine.connect() as conn:
-    conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS bronze_stock_prices (
-            date        TIMESTAMP,
-            ticker      TEXT,
-            open        FLOAT,
-            high        FLOAT,
-            low         FLOAT,
-            close       FLOAT,
-            volume      FLOAT,
-            load_date   TIMESTAMP
-        )
-    """))
-    conn.execute(text("""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_bronze_ticker_date
-        ON bronze_stock_prices (ticker, date)
-    """))
-    conn.commit()
-
-# --- Read all from landing (landing is always fresh/staging) ---
-df = pd.read_sql("SELECT * FROM landing_stock_prices", engine)
-print(f"Loading {len(df)} rows from landing into bronze.")
-
-if df.empty:
-    print("No new data in landing — bronze already up to date!")
-else:
-    df["load_date"] = datetime.now()
-
-    # Insert with ON CONFLICT DO NOTHING to prevent duplicates
+# --- Check last loaded date in bronze (not landing) ---
+try:
     with engine.connect() as conn:
-        for _, row in df.iterrows():
-            conn.execute(text("""
-                INSERT INTO bronze_stock_prices 
-                    (date, ticker, open, high, low, close, volume, load_date)
-                VALUES 
-                    (:date, :ticker, :open, :high, :low, :close, :volume, :load_date)
-                ON CONFLICT (ticker, date) DO NOTHING
-            """), row.to_dict())
-        conn.commit()
-    print(f"Bronze loaded: {len(df)} rows — duplicates skipped automatically.")
+        result = conn.execute(text("SELECT MAX(date) FROM bronze_stock_prices"))
+        last_date = result.scalar()
+except Exception as e:
+    logger.warning(f"Could not read bronze table (first run?): {e}")
+    last_date = None
+
+if last_date is None:
+    start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+    logger.info(f"First run — loading full history from {start_date}")
+else:
+    start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    logger.info(f"Incremental run — loading from {start_date}")
+
+end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+# --- Fetch from Yahoo Finance API ---
+logger.info("Fetching stock data from Yahoo Finance...")
+try:
+    raw = yf.download(TICKERS, start=start_date, end=end_date, interval="1d")
+except Exception as e:
+    logger.error(f"Failed to fetch stock data from Yahoo Finance: {e}")
+    raise
+
+if raw.empty:
+    logger.info("No new data — pipeline already up to date!")
+else:
+    # Validate expected columns exist before accessing them
+    expected_metrics = ["Open", "High", "Low", "Close", "Volume"]
+    raw.columns = [f"{metric}_{ticker}" for metric, ticker in raw.columns]
+    raw = raw.reset_index()
+
+    rows = []
+    for ticker in TICKERS:
+        expected_cols = [f"{m}_{ticker}" for m in expected_metrics]
+        missing = [c for c in expected_cols if c not in raw.columns]
+        if missing:
+            logger.warning(f"Skipping {ticker} — missing columns: {missing}")
+            continue
+
+        df_ticker = raw[["Date"] + expected_cols].copy()
+        df_ticker.columns = ["date", "open", "high", "low", "close", "volume"]
+        df_ticker["ticker"] = ticker
+        rows.append(df_ticker)
+
+    if not rows:
+        logger.warning("No valid ticker data fetched — check API response.")
+    else:
+        df = pd.concat(rows, ignore_index=True)
+        df = df.dropna(subset=["close"])
+        df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+
+        logger.info(f"Rows fetched: {len(df)}")
+
+        # Landing = replace each run (staging area, always fresh)
+        df.to_sql("landing_stock_prices", engine, if_exists="replace", index=False)
+        logger.info(f"Landing loaded: {len(df)} rows — staging area refreshed.")

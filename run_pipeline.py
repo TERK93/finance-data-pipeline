@@ -1,25 +1,31 @@
 import subprocess
 import sys
 from datetime import datetime
+from config import logger
+
+STEPS = [
+    "fetch_stocks.py",
+    "load_bronze.py",
+    "load_silver.py",
+    "load_dimensions.py",
+    "load_gold.py",
+]
+
 
 def run(script):
-    print(f"\n{'='*40}")
-    print(f"Running {script}...")
-    print(f"{'='*40}")
+    logger.info(f"Starting {script}...")
     result = subprocess.run([sys.executable, script], capture_output=False)
     if result.returncode != 0:
-        print(f"ERROR: {script} failed!")
+        logger.error(f"{script} failed — pipeline aborted.")
         sys.exit(1)
+    logger.info(f"{script} completed.")
+
 
 start = datetime.now()
-print(f"Pipeline started at {start.strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info(f"Pipeline started.")
 
-run("fetch_stocks.py")
-run("load_bronze.py")
-run("load_silver.py")
-run("load_dimensions.py")
-run("load_gold.py")
+for step in STEPS:
+    run(step)
 
-end = datetime.now()
-duration = (end - start).seconds
-print(f"\nPipeline completed in {duration} seconds!")
+duration = (datetime.now() - start).seconds
+logger.info(f"Pipeline completed in {duration} seconds.")

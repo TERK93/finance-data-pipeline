@@ -1,18 +1,8 @@
 import pandas as pd
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-import os
+from sqlalchemy import text
+from config import get_engine, logger
 
-load_dotenv()
-
-# --- Settings ---
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-
-engine = create_engine(f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+engine = get_engine()
 
 # --- Ticker dimension data ---
 tickers = [
@@ -42,7 +32,7 @@ with engine.connect() as conn:
     """))
     conn.commit()
 
-# --- Upsert — insert or update, never drop table ---
+# --- Upsert — insert or update on conflict, never drop table ---
 with engine.connect() as conn:
     for _, row in df.iterrows():
         conn.execute(text("""
@@ -56,5 +46,4 @@ with engine.connect() as conn:
         """), row.to_dict())
     conn.commit()
 
-print("dim_ticker upserted successfully!")
-print(df)
+logger.info(f"dim_ticker upserted successfully — {len(df)} tickers loaded.")

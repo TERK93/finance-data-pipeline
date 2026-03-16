@@ -1,21 +1,9 @@
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from datetime import datetime
-from dotenv import load_dotenv
-import os
+from config import get_engine, logger
 
-load_dotenv()
-
-# --- Settings ---
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-
-
-
-engine = create_engine(f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+engine = get_engine()
 
 # --- Create silver table if it doesn't exist ---
 with engine.connect() as conn:
@@ -27,7 +15,7 @@ with engine.connect() as conn:
             high        FLOAT,
             low         FLOAT,
             close       FLOAT,
-            volume      FLOAT,
+            volume      BIGINT,
             load_date   TIMESTAMP,
             status      TEXT
         )
@@ -43,47 +31,47 @@ with engine.connect() as conn:
     result = conn.execute(text("SELECT MAX(date) FROM silver_stock_prices"))
     last_silver_date = result.scalar()
 
-# --- Read only new rows from bronze ---
+# --- Read only new rows from bronze (parameterized query) ---
 if last_silver_date is None:
     df = pd.read_sql("SELECT * FROM bronze_stock_prices", engine)
-    print(f"First run — loading all bronze data into silver.")
+    logger.info("First run — loading all bronze data into silver.")
 else:
     df = pd.read_sql(
-        f"SELECT * FROM bronze_stock_prices WHERE date > '{last_silver_date}'",
-        engine
+        "SELECT * FROM bronze_stock_prices WHERE date > %(cutoff)s",
+        engine,
+        params={"cutoff": last_silver_date}
     )
-    print(f"Incremental run — loading data after {last_silver_date}")
+    logger.info(f"Incremental run — loading data after {last_silver_date}")
 
 if df.empty:
-    print("No new data — silver already up to date!")
+    logger.info("No new data — silver already up to date!")
 else:
-    # --- Data quality checks ---
+    # --- Data quality validation ---
     def validate_row(row):
-        # Null check
         if pd.isnull(row["close"]) or pd.isnull(row["open"]):
             return "invalid_null"
-        # Price sanity check — close price must be positive
         if row["close"] <= 0 or row["open"] <= 0:
             return "invalid_price"
-        # High must be >= low
         if row["high"] < row["low"]:
             return "invalid_high_low"
-        # Volume must be positive
+        # OHLCV integrity: close and open should be within high/low range
+        if row["close"] > row["high"] or row["close"] < row["low"]:
+            return "invalid_close_range"
         if row["volume"] <= 0:
             return "invalid_volume"
         return "valid"
 
     df["status"] = df.apply(validate_row, axis=1)
-
-    valid = df[df["status"] == "valid"]
-    invalid = df[df["status"] != "valid"]
-
-    print(f"Valid rows: {len(valid)}")
-    print(f"Invalid rows: {len(invalid)}")
-    if len(invalid) > 0:
-        print(invalid[["date", "ticker", "status"]])
-
     df["load_date"] = datetime.now()
-    df.to_sql("silver_stock_prices", engine, if_exists="append", index=False)
-    print(f"Silver loaded: {len(df)} rows with load_date {datetime.now()}")
 
+    valid_count   = (df["status"] == "valid").sum()
+    invalid_count = (df["status"] != "valid").sum()
+
+    logger.info(f"Validation complete — valid: {valid_count}, invalid: {invalid_count}")
+
+    if invalid_count > 0:
+        invalid_rows = df[df["status"] != "valid"][["date", "ticker", "status"]]
+        logger.warning(f"Invalid rows:\n{invalid_rows.to_string(index=False)}")
+
+    df.to_sql("silver_stock_prices", engine, if_exists="append", index=False)
+    logger.info(f"Silver loaded: {len(df)} rows.")

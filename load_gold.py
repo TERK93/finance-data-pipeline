@@ -1,18 +1,7 @@
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-import os
+from sqlalchemy import text
+from config import get_engine, logger
 
-load_dotenv()
-
-# --- Settings ---
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-
-
-engine = create_engine(f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+engine = get_engine()
 
 with engine.connect() as conn:
 
@@ -34,7 +23,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_daily_returns")
+    logger.info("gold_daily_returns — OK")
 
     # 2. Moving Averages
     conn.execute(text("""
@@ -56,7 +45,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_moving_average")
+    logger.info("gold_moving_average — OK")
 
     # 3. Performance Summary
     conn.execute(text("""
@@ -99,7 +88,7 @@ with engine.connect() as conn:
         LEFT JOIN three_months_ago tm ON l.ticker = tm.ticker AND tm.rn = 1
         WHERE l.rn = 1
     """))
-    print("✓ gold_performance_summary")
+    logger.info("gold_performance_summary — OK")
 
     # 4. Cumulative Returns
     conn.execute(text("""
@@ -126,7 +115,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_cumulative_returns")
+    logger.info("gold_cumulative_returns — OK")
 
     # 5. Volatility
     conn.execute(text("""
@@ -144,7 +133,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_volatility")
+    logger.info("gold_volatility — OK")
 
     # 6. Drawdown
     conn.execute(text("""
@@ -171,7 +160,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_drawdown")
+    logger.info("gold_drawdown — OK")
 
     # 7. Monthly Volume
     conn.execute(text("""
@@ -189,7 +178,7 @@ with engine.connect() as conn:
         GROUP BY DATE_TRUNC('month', s.date), s.ticker, d.company_name, d.sector
         ORDER BY month, s.ticker
     """))
-    print("✓ gold_monthly_volume")
+    logger.info("gold_monthly_volume — OK")
 
     # 8. Volume vs Price
     conn.execute(text("""
@@ -215,7 +204,7 @@ with engine.connect() as conn:
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
     """))
-    print("✓ gold_volume_vs_price")
+    logger.info("gold_volume_vs_price — OK")
 
     # 9. Sector Comparison
     conn.execute(text("""
@@ -248,7 +237,7 @@ with engine.connect() as conn:
         JOIN base b ON d.sector = b.sector
         ORDER BY d.date, d.sector
     """))
-    print("✓ gold_sector_comparison")
+    logger.info("gold_sector_comparison — OK")
 
     # 10. Correlation
     conn.execute(text("""
@@ -283,8 +272,7 @@ with engine.connect() as conn:
         FROM pairs
         GROUP BY ticker_a, ticker_b
     """))
-    print("✓ gold_correlation")
-
+    logger.info("gold_correlation — OK")
 
     # 11. Best/Worst Performers
     conn.execute(text("""
@@ -317,7 +305,7 @@ with engine.connect() as conn:
         LEFT JOIN close_30d_ago c ON l.ticker = c.ticker
         ORDER BY return_30d_pct DESC
     """))
-    print("✓ gold_best_worst_performers")
+    logger.info("gold_best_worst_performers — OK")
 
     conn.commit()
-    print("\nAlla gold views skapade!")
+    logger.info("All 11 gold views created successfully.")
