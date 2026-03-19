@@ -9,7 +9,7 @@ engine = get_engine()
 # --- Check last loaded date in bronze (not landing) ---
 try:
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT MAX(date) FROM bronze_stock_prices"))
+        result = conn.execute(text("SELECT MAX(date) FROM public.bronze_stock_prices"))
         last_date = result.scalar()
 except Exception as e:
     logger.warning(f"Could not read bronze table (first run?): {e}")
@@ -63,5 +63,5 @@ else:
         logger.info(f"Rows fetched: {len(df)}")
 
         # Landing = replace each run (staging area, always fresh)
-        df.to_sql("landing_stock_prices", engine, if_exists="replace", index=False)
+        df.to_sql("landing_stock_prices", engine, if_exists="replace", index=False, schema="public")
         logger.info(f"Landing loaded: {len(df)} rows — staging area refreshed.")
