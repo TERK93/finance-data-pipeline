@@ -275,6 +275,8 @@ with engine.connect() as conn:
     logger.info("gold_correlation — OK")
 
     # 11. Best/Worst Performers
+    # 11. Best/Worst Performers
+    conn.execute(text("DROP VIEW IF EXISTS gold_best_worst_performers"))
     conn.execute(text("""
         CREATE OR REPLACE VIEW gold_best_worst_performers AS
         WITH latest AS (
@@ -284,12 +286,21 @@ with engine.connect() as conn:
               AND date = (SELECT MAX(date) FROM silver_stock_prices WHERE status = 'valid')
         ),
         close_30d_ago AS (
-            SELECT DISTINCT ON (ticker)
-                ticker,
-                close AS close_30d
+            SELECT DISTINCT ON (ticker) ticker, close AS close_30d
             FROM silver_stock_prices
-            WHERE status = 'valid'
-              AND date <= CURRENT_DATE - INTERVAL '30 days'
+            WHERE status = 'valid' AND date <= CURRENT_DATE - INTERVAL '30 days'
+            ORDER BY ticker, date DESC
+        ),
+        close_90d_ago AS (
+            SELECT DISTINCT ON (ticker) ticker, close AS close_90d
+            FROM silver_stock_prices
+            WHERE status = 'valid' AND date <= CURRENT_DATE - INTERVAL '90 days'
+            ORDER BY ticker, date DESC
+        ),
+        close_180d_ago AS (
+            SELECT DISTINCT ON (ticker) ticker, close AS close_180d
+            FROM silver_stock_prices
+            WHERE status = 'valid' AND date <= CURRENT_DATE - INTERVAL '180 days'
             ORDER BY ticker, date DESC
         )
         SELECT
@@ -297,12 +308,18 @@ with engine.connect() as conn:
             d.company_name,
             d.sector,
             ROUND(l.latest_close::numeric, 2) AS latest_close,
-            ROUND(c.close_30d::numeric, 2) AS close_30d,
-            ROUND(((l.latest_close - c.close_30d) / c.close_30d * 100)::numeric, 2) AS return_30d_pct,
-            RANK() OVER (ORDER BY ((l.latest_close - c.close_30d) / c.close_30d) DESC) AS rank_best
+            ROUND(c30.close_30d::numeric, 2) AS close_30d,
+            ROUND(c90.close_90d::numeric, 2) AS close_90d,
+            ROUND(c180.close_180d::numeric, 2) AS close_180d,
+            ROUND(((l.latest_close - c30.close_30d) / c30.close_30d * 100)::numeric, 2) AS return_30d_pct,
+            ROUND(((l.latest_close - c90.close_90d) / c90.close_90d * 100)::numeric, 2) AS return_90d_pct,
+            ROUND(((l.latest_close - c180.close_180d) / c180.close_180d * 100)::numeric, 2) AS return_180d_pct,
+            RANK() OVER (ORDER BY ((l.latest_close - c30.close_30d) / c30.close_30d) DESC) AS rank_best
         FROM latest l
         JOIN dim_ticker d ON l.ticker = d.ticker
-        LEFT JOIN close_30d_ago c ON l.ticker = c.ticker
+        LEFT JOIN close_30d_ago c30 ON l.ticker = c30.ticker
+        LEFT JOIN close_90d_ago c90 ON l.ticker = c90.ticker
+        LEFT JOIN close_180d_ago c180 ON l.ticker = c180.ticker
         ORDER BY return_30d_pct DESC
     """))
     logger.info("gold_best_worst_performers — OK")
