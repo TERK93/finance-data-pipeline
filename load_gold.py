@@ -118,6 +118,7 @@ with engine.connect() as conn:
     logger.info("gold_cumulative_returns — OK")
 
     # 5. Volatility
+    conn.execute(text("DROP VIEW IF EXISTS gold_volatility"))
     conn.execute(text("""
         CREATE OR REPLACE VIEW gold_volatility AS
         SELECT
@@ -128,7 +129,15 @@ with engine.connect() as conn:
             ROUND(STDDEV(s.close) OVER (
                 PARTITION BY s.ticker ORDER BY s.date
                 ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            )::numeric, 2) AS volatility_30d
+            )::numeric, 2) AS volatility_30d,
+            ROUND(STDDEV(s.close) OVER (
+                PARTITION BY s.ticker ORDER BY s.date
+                ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
+            )::numeric, 2) AS volatility_90d,
+            ROUND(STDDEV(s.close) OVER (
+                PARTITION BY s.ticker ORDER BY s.date
+                ROWS BETWEEN 179 PRECEDING AND CURRENT ROW
+            )::numeric, 2) AS volatility_180d
         FROM silver_stock_prices s
         JOIN dim_ticker d ON s.ticker = d.ticker
         WHERE s.status = 'valid'
