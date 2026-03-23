@@ -158,21 +158,34 @@ LIMIT 10;
 ### Gold Layer — Best & Worst Performers (30-day)
 ![Best Worst Performers](screenshots/gold_best_worst_performance.png)
 
-## Dashboard Example
+## Dashboard
 
-Example dashboard built on top of the **Gold layer**.
+A three-page Power BI report built directly on top of the Gold layer views,
+demonstrating how the analytics-ready SQL output can be consumed in a 
+reporting layer.
 
-This demonstrates how the analytics-ready views produced by the pipeline
-can be consumed in a reporting or analytics layer.
+> Download: [finance_dashboard.pbix](finance_dashboard.pbix)
 
-### Pipeline Overview
+### Overview
+Dynamic KPI cards (avg return, Sharpe ratio, max drawdown) with a period 
+slicer (30D/90D/180D), cumulative returns chart across all tickers, and a 
+ranked performance table with conditional formatting.
 
-![Dashboard Overview](screenshots/dashboard_overview.png)
+![Overview](screenshots/dashboard_overview.png)
 
-### Moving Averages & Volatility
+### Analysis
+Ticker deep dive — price with MA30/MA90 overlay, drawdown from all-time 
+high, and volume vs 30-day average. All three charts are linked to a 
+ticker slicer for single-stock exploration.
 
-![Moving Average](screenshots/dashboard_moving_average.png)
+![Analysis](screenshots/dashboard_analysis.png)
 
+### Risk
+Volatility ranking with color gradient (green → red), sector return 
+comparison across 1M/3M/YTD, and a full 9×9 correlation heatmap with 
+blue intensity encoding correlation strength.
+
+![Risk](screenshots/dashboard_risk.png)
 
 ---
 
@@ -255,6 +268,11 @@ Added `try/except` around the Yahoo Finance API call and per-ticker column valid
 **Additional OHLCV validation in silver**
 Added a check that closing price falls within the day's high/low range (`low ≤ close ≤ high`). Parameterized the bronze query to replace an f-string with a proper bound parameter.
 
+**Extended volatility metrics (`load_gold.py`)**
+Added rolling 90-day and 180-day standard deviation to `gold_volatility`, enabling multi-horizon risk comparison across tickers in the Power BI dashboard.
+
+**Symmetric correlation matrix (`gold_correlation_full`)**
+Created a view that mirrors the upper triangle of `gold_correlation` into a full 9×9 matrix including diagonal values (self-correlation = 1.0), making it directly consumable by the Power BI matrix visual with conditional formatting.
 ---
 
 ## Possible Extensions
@@ -262,8 +280,9 @@ Added a check that closing price falls within the day's high/low range (`low ≤
 The current pipeline is intentionally kept lightweight for a portfolio project.
 Several natural extensions could evolve it toward a production-style data platform:
 
-- **Power BI dashboard** connected directly to the gold analytics views
-- **dbt models and tests** to move silver/gold transformations into a modern analytics workflow
 - **Apache Airflow orchestration** for scheduled daily pipeline runs
+- **dbt models and tests** to replace Python-based silver/gold logic with version-controlled, testable SQL transformations
 - **Docker containerization** to simplify deployment and reproducibility
 - **Unit tests** for validation logic and pipeline components
+- **Cloud deployment** (AWS RDS + S3 or GCP) to move from local PostgreSQL to a scalable cloud database
+- **Real-time ingestion** via a streaming API to support intraday analytics
