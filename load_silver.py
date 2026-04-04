@@ -2,6 +2,7 @@ import pandas as pd
 from sqlalchemy import text
 from datetime import datetime
 from config import get_engine, logger
+from validators import validate_row
 
 engine = get_engine()
 
@@ -46,21 +47,6 @@ else:
 if df.empty:
     logger.info("No new data — silver already up to date!")
 else:
-    # --- Data quality validation ---
-    def validate_row(row):
-        if pd.isnull(row["close"]) or pd.isnull(row["open"]):
-            return "invalid_null"
-        if row["close"] <= 0 or row["open"] <= 0:
-            return "invalid_price"
-        if row["high"] < row["low"]:
-            return "invalid_high_low"
-        # OHLCV integrity: close and open should be within high/low range
-        if row["close"] > row["high"] or row["close"] < row["low"]:
-            return "invalid_close_range"
-        if row["volume"] <= 0:
-            return "invalid_volume"
-        return "valid"
-
     df["status"] = df.apply(validate_row, axis=1)
     df["load_date"] = datetime.now()
 
