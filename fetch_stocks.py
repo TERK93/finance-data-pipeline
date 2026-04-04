@@ -33,14 +33,13 @@ def reshape_yfinance_response(raw: pd.DataFrame, tickers: list) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    import db
     engine = get_engine()
 
-    # --- Check last loaded date in bronze (not landing) ---
+    # --- Check last loaded date in bronze ---
     try:
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT MAX(date) FROM public.bronze_stock_prices"))
-            last_date = result.scalar()
-    except Exception as e:
+        last_date = db.get_max_date(engine, db.BRONZE)
+    except Exception:
         logger.exception("Could not read bronze table (first run?)")
         last_date = None
 
@@ -57,7 +56,7 @@ if __name__ == "__main__":
     logger.info("Fetching stock data from Yahoo Finance...")
     try:
         raw = yf.download(TICKERS, start=start_date, end=end_date, interval="1d")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to fetch stock data from Yahoo Finance")
         raise
 
@@ -70,5 +69,5 @@ if __name__ == "__main__":
             logger.warning("No valid ticker data fetched — check API response.")
         else:
             logger.info(f"Rows fetched: {len(df)}")
-            df.to_sql("landing_stock_prices", engine, if_exists="replace", index=False, schema="public")
+            db.replace_table(df, db.LANDING, engine)
             logger.info(f"Landing loaded: {len(df)} rows — staging area refreshed.")

@@ -1,4 +1,4 @@
-import pandas as pd
+import db
 from sqlalchemy import text
 from datetime import datetime
 from config import get_engine, logger
@@ -10,17 +10,17 @@ try:
     # --- Create silver table if it doesn't exist ---
     with engine.connect() as conn:
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS public.silver_stock_prices (
-            date        TIMESTAMP,
-            ticker      TEXT,
-            open        FLOAT,
-            high        FLOAT,
-            low         FLOAT,
-            close       FLOAT,
-            volume      BIGINT,
-            load_date   TIMESTAMP,
-            status      TEXT
-        )
+            CREATE TABLE IF NOT EXISTS public.silver_stock_prices (
+                date        TIMESTAMP,
+                ticker      TEXT,
+                open        FLOAT,
+                high        FLOAT,
+                low         FLOAT,
+                close       FLOAT,
+                volume      BIGINT,
+                load_date   TIMESTAMP,
+                status      TEXT
+            )
         """))
         conn.execute(text("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_ticker_date
@@ -28,40 +28,34 @@ try:
         """))
         conn.commit()
 
-        # --- Check last loaded date in silver ---
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT MAX(date) FROM public.silver_stock_prices"))
-            last_silver_date = result.scalar()
+    # --- Check last loaded date in silver ---
+    last_silver_date = db.get_max_date(engine, db.SILVER)
 
-        # --- Read only new rows from bronze (parameterized query) ---
-        if last_silver_date is None:
-            df = pd.read_sql("SELECT * FROM public.bronze_stock_prices", engine)
-            logger.info("First run — loading all bronze data into silver.")
-        else:
-            df = pd.read_sql(
-                "SELECT * FROM public.bronze_stock_prices WHERE date > %(cutoff)s",
-                engine,
-                params={"cutoff": last_silver_date}
-            )
-            logger.info(f"Incremental run — loading data after {last_silver_date}")
+    if last_silver_date is None:
+        logger.info("First run — loading all bronze data into silver.")
+    else:
+        logger.info(f"Incremental run — loading data after {last_silver_date}")
 
-        if df.empty:
-            logger.info("No new data — silver already up to date!")
-        else:
-            df["status"] = df.apply(validate_row, axis=1)
-            df["load_date"] = datetime.now()
+    # --- Read new rows from bronze ---
+    df = db.read_new_rows(engine, db.BRONZE, last_silver_date, db.SILVER_COLUMNS)
 
-            valid_count   = (df["status"] == "valid").sum()
-            invalid_count = (df["status"] != "valid").sum()
+    if df.empty:
+        logger.info("No new data — silver already up to date!")
+    else:
+        df["status"] = df.apply(validate_row, axis=1)
+        df["load_date"] = datetime.now()
 
-            logger.info(f"Validation complete — valid: {valid_count}, invalid: {invalid_count}")
+        valid_count   = (df["status"] == "valid").sum()
+        invalid_count = (df["status"] != "valid").sum()
 
-            if invalid_count > 0:
-                invalid_rows = df[df["status"] != "valid"][["date", "ticker", "status"]]
-                logger.warning(f"Invalid rows:\n{invalid_rows.to_string(index=False)}")
+        logger.info(f"Validation complete — valid: {valid_count}, invalid: {invalid_count}")
 
-            df.to_sql("silver_stock_prices", engine, if_exists="append", index=False, schema="public")
-            logger.info(f"Silver loaded: {len(df)} rows.")
+        if invalid_count > 0:
+            invalid_rows = df[df["status"] != "valid"][["date", "ticker", "status"]]
+            logger.warning(f"Invalid rows:\n{invalid_rows.to_string(index=False)}")
+
+        db.append_rows(df, db.SILVER, engine)
+        logger.info(f"Silver loaded: {len(df)} rows.")
 
 except Exception:
     logger.exception("load_silver.py failed")

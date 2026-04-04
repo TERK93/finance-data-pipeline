@@ -1,4 +1,4 @@
-import pandas as pd
+import db
 from sqlalchemy import text
 from config import get_engine, logger
 
@@ -18,8 +18,6 @@ try:
         {"ticker": "V",     "company_name": "Visa",            "sector": "Finance",    "industry": "Payment Processing", "currency": "USD"},
     ]
 
-    df = pd.DataFrame(tickers)
-
     # --- Create table if not exists ---
     with engine.connect() as conn:
         conn.execute(text("""
@@ -33,9 +31,9 @@ try:
         """))
         conn.commit()
 
-    # --- Upsert — insert or update on conflict, never drop table ---
+    # --- Upsert ---
     with engine.connect() as conn:
-        for _, row in df.iterrows():
+        for row in tickers:
             conn.execute(text("""
                 INSERT INTO dim_ticker (ticker, company_name, sector, industry, currency)
                 VALUES (:ticker, :company_name, :sector, :industry, :currency)
@@ -44,11 +42,11 @@ try:
                     sector       = EXCLUDED.sector,
                     industry     = EXCLUDED.industry,
                     currency     = EXCLUDED.currency
-            """), row.to_dict())
+            """), row)
         conn.commit()
 
-    logger.info(f"dim_ticker upserted successfully — {len(df)} tickers loaded.")
-    
+    logger.info(f"dim_ticker upserted successfully — {len(tickers)} tickers loaded.")
+
 except Exception:
     logger.exception("load_dimensions.py failed")
     raise

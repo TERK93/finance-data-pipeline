@@ -1,35 +1,30 @@
-import pandas as pd
-from sqlalchemy import text
+import db
 from config import get_engine, logger
 
-engine = get_engine()
-
-# --- Check last loaded date in bronze ---
 try:
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT MAX(date) FROM public.bronze_stock_prices"))
-        last_date = result.scalar()
-except Exception as e:
-    logger.warning(f"Could not read bronze table (first run?): {e}")
-    last_date = None
+    engine = get_engine()
 
-# --- Read from landing ---
-if last_date is None:
-    df = pd.read_sql("SELECT * FROM public.landing_stock_prices", engine)
-    logger.info("First run — loading all landing data into bronze.")
-else:
-    df = pd.read_sql(
-        "SELECT * FROM public.landing_stock_prices WHERE date > %(cutoff)s",
-        engine,
-        params={"cutoff": last_date}
-    )
-    logger.info(f"Incremental run — loading from {last_date}")
+    # --- Check last loaded date in bronze ---
+    try:
+        last_date = db.get_max_date(engine, db.BRONZE)
+    except Exception:
+        logger.exception("Could not read bronze table (first run?)")
+        last_date = None
 
-if df.empty:
-    logger.info("No new data — bronze already up to date!")
-else:
-    df = df[["date", "ticker", "open", "high", "low", "close", "volume"]]
-    
-    # --- Append to bronze ---
-    df.to_sql("bronze_stock_prices", engine, if_exists="append", index=False, schema="public")
-    logger.info(f"Bronze loaded: {len(df)} rows appended.")
+    # --- Read new rows from landing ---
+    df = db.read_new_rows(engine, db.LANDING, last_date, db.BRONZE_COLUMNS)
+
+    if last_date is None:
+        logger.info("First run — loading all landing data into bronze.")
+    else:
+        logger.info(f"Incremental run — loading from {last_date}")
+
+    if df.empty:
+        logger.info("No new data — bronze already up to date!")
+    else:
+        db.append_rows(df, db.BRONZE, engine)
+        logger.info(f"Bronze loaded: {len(df)} rows appended.")
+
+except Exception:
+    logger.exception("load_bronze.py failed")
+    raise
