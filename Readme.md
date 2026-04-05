@@ -14,6 +14,8 @@ Working with financial market data introduces engineering considerations that ge
 - Data quality validation with status flags
 - Idempotent pipeline behavior
 - Time-series analytics using SQL window functions
+- Unit tested validation and ingestion logic
+- Automated scheduling via GitHub Actions CI/CD
 
 ---
 
@@ -66,6 +68,9 @@ gold_* views (11 analytics views)
 | SQLAlchemy | Python → PostgreSQL interface |
 | PostgreSQL | Database (all layers) |
 | DBeaver | Database GUI |
+| Supabase | Managed cloud PostgreSQL hosting |
+| Docker | Containerised local development |
+| GitHub Actions | Automated daily pipeline scheduling |
 
 ---
 
@@ -192,13 +197,14 @@ blue intensity encoding correlation strength.
 ## Setup
 
 **Prerequisites**
-- Python 3.x
-- PostgreSQL running locally
-- DBeaver (optional, for browsing data)
+- Python 3.11+
+- A Supabase account (free tier) or local PostgreSQL
+- Docker (optional)
 
 **Install dependencies**
 ```bash
 pip install -r requirements.txt
+
 ```
 
 **Configure environment**
@@ -207,14 +213,19 @@ Copy `.env.example` to `.env` and fill in your credentials:
 ```
 DB_USER=postgres
 DB_PASSWORD=your_password
-DB_HOST=localhost
+DB_HOST=your_host
 DB_PORT=5432
-DB_NAME=market_data_pipeline
+DB_NAME=postgres
 ```
+For Supabase, use the Transaction Pooler host and port 6543. The username format is postgres.<project-id>.
 
 **Run the full pipeline**
 ```bash
 python run_pipeline.py
+```
+**Or run via Docker**
+```bash
+docker-compose up
 ```
 
 **Or run each step individually**
@@ -245,13 +256,29 @@ python load_gold.py
 
 - **Yahoo Finance is a free public API** — not an enterprise data source. Suitable for learning and portfolio projects; not production-grade for financial systems.
 - **Daily granularity only** — intraday data would require a paid API and significantly more storage.
-- **No orchestration** — the pipeline is triggered manually. Scheduling via Airflow or cron is a natural next step.
+- **No orchestration framework — scheduling is handled via GitHub Actions cron. A tool like Airflow or Prefect would add dependency management, retries and observability for a production system**.
 - **Silver validation runs in Python** — for larger datasets this would move into SQL or dbt tests.
 - **Nine tickers** — a deliberate scope decision to keep the project focused rather than comprehensive.
 
 ---
 
 ## Recent Improvements
+
+
+**GitHub Actions automation**
+The pipeline runs automatically every weekday at 10pm UTC via a GitHub Actions workflow. Supabase credentials are stored as GitHub Secrets — no credentials in the repository.
+
+**Cloud database (Supabase)**
+Migrated from local PostgreSQL to Supabase managed cloud PostgreSQL, connected via the Transaction Pooler for compatibility with dynamic IP environments like GitHub Actions.
+
+**Docker support**
+Added `dockerfile` and `docker-compose.yml` for fully containerised local runs via `docker-compose up`.
+
+**DB abstraction layer (`db.py`)**
+Extracted all database read/write operations into named functions (`get_max_date`, `read_new_rows`, `append_rows`, `replace_table`). Scripts no longer contain raw SQL for data movement.
+
+**Unit tests**
+Added pytest suite covering `validate_row()` (10 tests) and `reshape_yfinance_response()` (3 tests). Tests run without a database connection using mocked data.
 
 **Centralized configuration (`config.py`)**
 Extracted database connection, ticker list and logging setup into a single module. Previously each script duplicated the same environment variable reads and engine creation.
@@ -280,9 +307,8 @@ Created a view that mirrors the upper triangle of `gold_correlation` into a full
 The current pipeline is intentionally kept lightweight for a portfolio project.
 Several natural extensions could evolve it toward a production-style data platform:
 
-- **Apache Airflow orchestration** for scheduled daily pipeline runs
+- **Apache Airflow or Prefect** for dependency management, retries and pipeline observability beyond cron scheduling
 - **dbt models and tests** to replace Python-based silver/gold logic with version-controlled, testable SQL transformations
-- **Docker containerization** to simplify deployment and reproducibility
-- **Unit tests** for validation logic and pipeline components
-- **Cloud deployment** (AWS RDS + S3 or GCP) to move from local PostgreSQL to a scalable cloud database
+- **Alerting** on validation failures or pipeline errors via Slack or email
+- **Expanded ticker universe** with broader sector and index coverage
 - **Real-time ingestion** via a streaming API to support intraday analytics
