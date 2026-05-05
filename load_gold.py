@@ -8,7 +8,8 @@ try:
 
         # 1. Daily Returns
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_daily_returns AS
+            CREATE OR REPLACE VIEW gold_daily_returns WITH (security_invoker = true) AS
+
             SELECT
                 s.date,
                 s.ticker,
@@ -28,7 +29,8 @@ try:
 
         # 2. Moving Averages
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_moving_average AS
+            CREATE OR REPLACE VIEW gold_moving_average WITH (security_invoker = true) AS
+
             SELECT
                 s.date,
                 s.ticker,
@@ -50,7 +52,8 @@ try:
 
         # 3. Performance Summary
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_performance_summary AS
+            CREATE OR REPLACE VIEW gold_performance_summary WITH (security_invoker = true) AS
+
             WITH latest AS (
                 SELECT ticker, close, date,
                     ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
@@ -93,7 +96,8 @@ try:
 
         # 4. Cumulative Returns
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_cumulative_returns AS
+            CREATE OR REPLACE VIEW gold_cumulative_returns WITH (security_invoker = true) AS
+
             WITH first_close AS (
                 SELECT ticker, MIN(date) AS first_date
                 FROM silver_stock_prices WHERE status = 'valid'
@@ -120,7 +124,8 @@ try:
 
         # 5. Volatility
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_volatility AS
+            CREATE OR REPLACE VIEW gold_volatility WITH (security_invoker = true) AS
+
             SELECT
                 s.date,
                 s.ticker,
@@ -146,7 +151,8 @@ try:
 
         # 6. Drawdown
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_drawdown AS
+            CREATE OR REPLACE VIEW gold_drawdown WITH (security_invoker = true) AS
+
             SELECT
                 s.date,
                 s.ticker,
@@ -173,7 +179,8 @@ try:
 
         # 7. Monthly Volume
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_monthly_volume AS
+            CREATE OR REPLACE VIEW gold_monthly_volume WITH (security_invoker = true) AS
+
             SELECT
                 DATE_TRUNC('month', s.date) AS month,
                 s.ticker,
@@ -191,7 +198,8 @@ try:
 
         # 8. Volume vs Price
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_volume_vs_price AS
+            CREATE OR REPLACE VIEW gold_volume_vs_price WITH (security_invoker = true) AS
+
             SELECT
                 s.date,
                 s.ticker,
@@ -217,7 +225,8 @@ try:
 
         # 9. Sector Comparison
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_sector_comparison AS
+            CREATE OR REPLACE VIEW gold_sector_comparison WITH (security_invoker = true) AS
+
             WITH daily AS (
                 SELECT
                     s.date,
@@ -250,7 +259,8 @@ try:
 
         # 10. Correlation
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_correlation AS
+            CREATE OR REPLACE VIEW gold_correlation WITH (security_invoker = true) AS
+
             WITH returns AS (
                 SELECT
                     ticker,
@@ -285,7 +295,8 @@ try:
 
         # 11. Best/Worst Performers
         conn.execute(text("""
-            CREATE OR REPLACE VIEW gold_best_worst_performers AS
+            CREATE OR REPLACE VIEW gold_best_worst_performers WITH (security_invoker = true) AS
+
             WITH latest AS (
                 SELECT ticker, close AS latest_close
                 FROM silver_stock_prices
