@@ -1,8 +1,13 @@
+import time
 import yfinance as yf
 import pandas as pd
-from sqlalchemy import text
 from datetime import datetime, timedelta
 from config import get_engine, TICKERS, logger
+
+# Yahoo returns an empty DataFrame (not an error) when it blocks the caller,
+# common from CI IPs — so retry before treating empty as final.
+MAX_FETCH_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 5
 
 
 def reshape_yfinance_response(raw: pd.DataFrame, tickers: list) -> pd.DataFrame:
@@ -32,7 +37,38 @@ def reshape_yfinance_response(raw: pd.DataFrame, tickers: list) -> pd.DataFrame:
     return df[["date", "ticker", "open", "high", "low", "close", "volume"]]
 
 
-if __name__ == "__main__":
+def window_has_trading_days(start_date: str, end_date: str) -> bool:
+    # end is exclusive, so a weekend-only window is legitimately empty
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    day = start
+    while day < end:
+        if day.weekday() < 5:
+            return True
+        day += timedelta(days=1)
+    return False
+
+
+def fetch_with_retries(tickers: list, start_date: str, end_date: str) -> pd.DataFrame:
+    for attempt in range(1, MAX_FETCH_RETRIES + 1):
+        try:
+            raw = yf.download(tickers, start=start_date, end=end_date, interval="1d")
+        except Exception:
+            logger.exception(f"yfinance download failed (attempt {attempt})")
+            raw = pd.DataFrame()
+
+        if not raw.empty:
+            return raw
+
+        if attempt < MAX_FETCH_RETRIES:
+            wait = RETRY_BACKOFF_SECONDS * attempt
+            logger.warning(f"Empty response — retrying in {wait}s")
+            time.sleep(wait)
+
+    return pd.DataFrame()
+
+
+def main():
     import db
     engine = get_engine()
 
@@ -50,24 +86,35 @@ if __name__ == "__main__":
         start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
         logger.info(f"Incremental run — loading from {start_date}")
 
-    end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # end is exclusive, so today loads through yesterday's complete bar
+    end_date = datetime.now().strftime("%Y-%m-%d")
+
+    if start_date >= end_date:
+        logger.info("No new data — pipeline already up to date.")
+        return
 
     # --- Fetch from Yahoo Finance API ---
-    logger.info("Fetching stock data from Yahoo Finance...")
-    try:
-        raw = yf.download(TICKERS, start=start_date, end=end_date, interval="1d")
-    except Exception:
-        logger.exception("Failed to fetch stock data from Yahoo Finance")
-        raise
+    logger.info(f"Fetching stock data from {start_date} to {end_date}...")
+    raw = fetch_with_retries(TICKERS, start_date, end_date)
 
     if raw.empty:
-        logger.info("No new data — pipeline already up to date!")
-    else:
-        df = reshape_yfinance_response(raw, TICKERS)
+        if window_has_trading_days(start_date, end_date):
+            raise RuntimeError(
+                f"No data for {start_date}..{end_date} despite trading days — "
+                f"Yahoo likely rate-limited."
+            )
+        logger.info("No trading days in window — nothing to fetch.")
+        return
 
-        if df.empty:
-            logger.warning("No valid ticker data fetched — check API response.")
-        else:
-            logger.info(f"Rows fetched: {len(df)}")
-            db.replace_table(df, db.LANDING, engine)
-            logger.info(f"Landing loaded: {len(df)} rows — staging area refreshed.")
+    df = reshape_yfinance_response(raw, TICKERS)
+
+    if df.empty:
+        raise RuntimeError("Data returned but no valid rows after reshape.")
+
+    logger.info(f"Rows fetched: {len(df)}")
+    db.replace_table(df, db.LANDING, engine)
+    logger.info(f"Landing loaded: {len(df)} rows — staging area refreshed.")
+
+
+if __name__ == "__main__":
+    main()
