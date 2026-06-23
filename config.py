@@ -32,3 +32,6 @@ def get_engine():
 
 # --- Tickers ---
 TICKERS = ["MSFT", "GOOGL", "AMZN", "NVDA", "META", "SPOT", "TSLA", "JPM", "V"]
+
+# --- Data source (Tiingo) ---
+TIINGO_API_KEY = os.getenv("TIINGO_API_KEY")

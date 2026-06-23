@@ -1,6 +1,6 @@
 # Finance Data Pipeline
 
-An end-to-end data pipeline that ingests daily stock market data from Yahoo Finance and transforms it through a Medallion Architecture (Landing → Bronze → Silver → Gold) into analytics-ready views in PostgreSQL.
+An end-to-end data pipeline that ingests daily stock market data from the Tiingo API and transforms it through a Medallion Architecture (Landing → Bronze → Silver → Gold) into analytics-ready views in PostgreSQL.
 
 The pipeline runs incrementally, validates data quality at each layer, and exposes 11 SQL views designed for BI and exploratory analysis.
 
@@ -27,7 +27,7 @@ Data flows through five steps, each with a clear responsibility:
 
 | Step | Script | Table / Object | Purpose |
 |---|---|---|---|
-| 1 | `fetch_stocks.py` | `landing_stock_prices` | Fetch raw OHLCV from Yahoo Finance API |
+| 1 | `fetch_stocks.py` | `landing_stock_prices` | Fetch daily OHLCV from the Tiingo API |
 | 2 | `load_bronze.py` | `bronze_stock_prices` | Append-only historical store |
 | 3 | `load_silver.py` | `silver_stock_prices` | Data quality validation + status flags |
 | 4 | `load_dimensions.py` | `dim_ticker` | Company metadata (name, sector, industry) |
@@ -63,7 +63,8 @@ gold_* views (11 analytics views)
 | Tool | Purpose |
 |---|---|
 | Python | Pipeline logic and orchestration |
-| yfinance | Yahoo Finance API client |
+| Tiingo | Licensed market-data API (daily EOD prices) |
+| requests | HTTP client for the Tiingo API |
 | pandas | Data manipulation |
 | SQLAlchemy | Python → PostgreSQL interface |
 | PostgreSQL | Database (all layers) |
@@ -100,7 +101,7 @@ Invalid rows are flagged with a status code (`invalid_null`, `invalid_price`, `i
 No data duplication. Views always reflect the latest validated silver data without requiring a separate load step.
 
 **Exclude current day**
-`end_date` is set to yesterday to avoid loading partial intraday data that would produce misleading analytics.
+`end_date` is set to today; because the API treats `end` as exclusive, each run loads through yesterday's complete bar and skips today's partial intraday data.
 
 **Centralized config**
 `config.py` holds database connection, ticker list and logging setup. One change propagates across the entire pipeline.
@@ -254,7 +255,7 @@ python load_gold.py
 
 ## Known Limitations & Tradeoffs
 
-- **Yahoo Finance is a free public API** — not an enterprise data source. Suitable for learning and portfolio projects; not production-grade for financial systems.
+- **Tiingo free tier** — a licensed market-data API on its free plan: ample for daily end-of-day data on a handful of tickers, and authenticated by key so it runs from CI. A production data platform would use a paid tier with an SLA.
 - **Daily granularity only** — intraday data would require a paid API and significantly more storage.
 - **No orchestration framework — scheduling is handled via GitHub Actions cron. A tool like Airflow or Prefect would add dependency management, retries and observability for a production system**.
 - **Silver validation runs in Python** — for larger datasets this would move into SQL or dbt tests.
@@ -264,6 +265,9 @@ python load_gold.py
 
 ## Recent Improvements
 
+
+**Licensed data source (Tiingo)**
+Migrated from an unofficial Yahoo scrape (`yfinance`) to the licensed Tiingo API. yfinance was being blocked from GitHub Actions' datacenter IPs — silently loading nothing while CI stayed green. Tiingo authenticates by API key, so the pipeline runs reliably from CI.
 
 **GitHub Actions automation**
 The pipeline runs automatically every weekday at 10pm UTC via a GitHub Actions workflow. Supabase credentials are stored as GitHub Secrets — no credentials in the repository.
@@ -278,7 +282,7 @@ Added `dockerfile` and `docker-compose.yml` for fully containerised local runs v
 Extracted all database read/write operations into named functions (`get_max_date`, `read_new_rows`, `append_rows`, `replace_table`). Scripts no longer contain raw SQL for data movement.
 
 **Unit tests**
-Added pytest suite covering `validate_row()` (10 tests) and `reshape_yfinance_response()` (3 tests). Tests run without a database connection using mocked data.
+Added a pytest suite covering `validate_row()` and the data-fetch/reshape logic (20 tests), run without a database using mocked responses.
 
 **Centralized configuration (`config.py`)**
 Extracted database connection, ticker list and logging setup into a single module. Previously each script duplicated the same environment variable reads and engine creation.
@@ -289,8 +293,8 @@ Replaced a row-by-row Python loop (`iterrows()`) with a single `INSERT INTO bron
 **Structured logging**
 Replaced all `print()` statements with Python's `logging` module. Every log line now includes a timestamp and severity level, making pipeline behavior traceable without reading source code.
 
-**Error handling in fetch**
-Added `try/except` around the Yahoo Finance API call and per-ticker column validation. If a ticker is missing from the API response it is logged and skipped rather than crashing the entire fetch.
+**Fail loudly on empty fetches**
+The fetch retries on empty or blocked responses and raises — failing CI — when a trading-day window returns no data, instead of silently exiting green. A run that loads zero rows on a trading day is treated as a failure.
 
 **Additional OHLCV validation in silver**
 Added a check that closing price falls within the day's high/low range (`low ≤ close ≤ high`). Parameterized the bronze query to replace an f-string with a proper bound parameter.
