@@ -1,40 +1,43 @@
 import time
-import yfinance as yf
+import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from config import get_engine, TICKERS, logger
+from config import get_engine, TICKERS, TIINGO_API_KEY, logger
 
-# Yahoo returns an empty DataFrame (not an error) when it blocks the caller,
-# common from CI IPs — so retry before treating empty as final.
 MAX_FETCH_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5
+TIINGO_BASE_URL = "https://api.tiingo.com/tiingo/daily"
 
 
-def reshape_yfinance_response(raw: pd.DataFrame, tickers: list) -> pd.DataFrame:
-    expected_metrics = ["Open", "High", "Low", "Close", "Volume"]
-    raw = raw.copy()
-    raw.columns = [f"{metric}_{ticker}" for metric, ticker in raw.columns]
-    raw = raw.reset_index()
+def fetch_ticker(ticker: str, start_date: str, end_date: str) -> list:
+    url = f"{TIINGO_BASE_URL}/{ticker}/prices"
+    params = {"startDate": start_date, "endDate": end_date, "token": TIINGO_API_KEY}
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
+
+def reshape_response(raw_by_ticker: dict) -> pd.DataFrame:
+    # Use the adjusted fields (split/dividend-adjusted) so returns and drawdown
+    # stay correct — matches yfinance's previous auto_adjust default.
     rows = []
-    for ticker in tickers:
-        expected_cols = [f"{m}_{ticker}" for m in expected_metrics]
-        missing = [c for c in expected_cols if c not in raw.columns]
-        if missing:
-            logger.warning(f"Skipping {ticker} — missing columns: {missing}")
-            continue
-
-        df_ticker = raw[["Date"] + expected_cols].copy()
-        df_ticker.columns = ["date", "open", "high", "low", "close", "volume"]
-        df_ticker["ticker"] = ticker
-        rows.append(df_ticker)
+    for ticker, bars in raw_by_ticker.items():
+        for bar in bars:
+            rows.append({
+                "date": bar["date"][:10],
+                "ticker": ticker,
+                "open": bar["adjOpen"],
+                "high": bar["adjHigh"],
+                "low": bar["adjLow"],
+                "close": bar["adjClose"],
+                "volume": bar["adjVolume"],
+            })
 
     if not rows:
         return pd.DataFrame()
 
-    df = pd.concat(rows, ignore_index=True)
-    df = df.dropna(subset=["close"])
-    return df[["date", "ticker", "open", "high", "low", "close", "volume"]]
+    df = pd.DataFrame(rows, columns=["date", "ticker", "open", "high", "low", "close", "volume"])
+    return df.dropna(subset=["close"])
 
 
 def window_has_trading_days(start_date: str, end_date: str) -> bool:
@@ -49,28 +52,29 @@ def window_has_trading_days(start_date: str, end_date: str) -> bool:
     return False
 
 
-def fetch_with_retries(tickers: list, start_date: str, end_date: str) -> pd.DataFrame:
+def fetch_with_retries(tickers: list, start_date: str, end_date: str) -> dict:
     for attempt in range(1, MAX_FETCH_RETRIES + 1):
         try:
-            raw = yf.download(tickers, start=start_date, end=end_date, interval="1d")
+            result = {t: fetch_ticker(t, start_date, end_date) for t in tickers}
+            if any(result.values()):
+                return result
         except Exception:
-            logger.exception(f"yfinance download failed (attempt {attempt})")
-            raw = pd.DataFrame()
-
-        if not raw.empty:
-            return raw
+            logger.exception(f"Tiingo fetch failed (attempt {attempt})")
 
         if attempt < MAX_FETCH_RETRIES:
             wait = RETRY_BACKOFF_SECONDS * attempt
-            logger.warning(f"Empty response — retrying in {wait}s")
+            logger.warning(f"Empty/failed response — retrying in {wait}s")
             time.sleep(wait)
 
-    return pd.DataFrame()
+    return {}
 
 
 def main():
     import db
     engine = get_engine()
+
+    if not TIINGO_API_KEY:
+        raise RuntimeError("TIINGO_API_KEY is not set — add it to .env / GitHub Secrets.")
 
     # --- Check last loaded date in bronze ---
     try:
@@ -93,20 +97,20 @@ def main():
         logger.info("No new data — pipeline already up to date.")
         return
 
-    # --- Fetch from Yahoo Finance API ---
-    logger.info(f"Fetching stock data from {start_date} to {end_date}...")
+    # --- Fetch from Tiingo ---
+    logger.info(f"Fetching stock data from Tiingo ({start_date} to {end_date})...")
     raw = fetch_with_retries(TICKERS, start_date, end_date)
 
-    if raw.empty:
+    if not any(raw.values()):
         if window_has_trading_days(start_date, end_date):
             raise RuntimeError(
                 f"No data for {start_date}..{end_date} despite trading days — "
-                f"Yahoo likely rate-limited."
+                f"check the Tiingo API key or rate limits."
             )
         logger.info("No trading days in window — nothing to fetch.")
         return
 
-    df = reshape_yfinance_response(raw, TICKERS)
+    df = reshape_response(raw)
 
     if df.empty:
         raise RuntimeError("Data returned but no valid rows after reshape.")
