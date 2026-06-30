@@ -39,3 +39,7 @@ def append_rows(df: pd.DataFrame, table: str, engine):
 def replace_table(df: pd.DataFrame, table: str, engine):
     """Replaces a table entirely (used for landing)."""
     df.to_sql(table, engine, if_exists="replace", index=False, schema="public")
+    # to_sql drops/recreates the table, wiping RLS — re-enable it each run
+    with engine.connect() as conn:
+        conn.execute(text(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"))
+        conn.commit()
