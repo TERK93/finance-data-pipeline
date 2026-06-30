@@ -40,6 +40,11 @@ def test_reshape_drops_rows_with_null_close():
     bars[0]["adjClose"] = float("nan")
     assert len(reshape_response({"MSFT": bars})) == 0
 
+def test_reshape_date_is_datetime():
+    # landing.date must be a timestamp, or load_bronze's date comparison breaks
+    result = reshape_response({"MSFT": make_bars()})
+    assert pd.api.types.is_datetime64_any_dtype(result["date"])
+
 
 # --- window_has_trading_days (yfinance/Tiingo `end` is exclusive) ---
 
