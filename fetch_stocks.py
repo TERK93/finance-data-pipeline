@@ -37,6 +37,8 @@ def reshape_response(raw_by_ticker: dict) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows, columns=["date", "ticker", "open", "high", "low", "close", "volume"])
+    # parse to real datetimes so landing.date is a timestamp column, not TEXT
+    df["date"] = pd.to_datetime(df["date"])
     return df.dropna(subset=["close"])
 
 
