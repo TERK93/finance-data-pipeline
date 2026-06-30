@@ -36,6 +36,24 @@ def append_rows(df: pd.DataFrame, table: str, engine):
     df.to_sql(table, engine, if_exists="append", index=False, schema="public")
 
 
+def insert_ignore_duplicates(engine, source: str, target: str, columns: list):
+    """Insert source rows into target, skipping (ticker, date) duplicates.
+
+    Returns (inserted, skipped). Requires a unique index on target (ticker, date).
+    """
+    cols = ", ".join(columns)
+    with engine.connect() as conn:
+        total = conn.execute(text(f"SELECT COUNT(*) FROM public.{source}")).scalar()
+        result = conn.execute(text(
+            f"INSERT INTO public.{target} ({cols}) "
+            f"SELECT {cols} FROM public.{source} "
+            f"ON CONFLICT (ticker, date) DO NOTHING"
+        ))
+        conn.commit()
+        inserted = result.rowcount
+        return inserted, total - inserted
+
+
 def replace_table(df: pd.DataFrame, table: str, engine):
     """Replaces a table entirely (used for landing)."""
     df.to_sql(table, engine, if_exists="replace", index=False, schema="public")
