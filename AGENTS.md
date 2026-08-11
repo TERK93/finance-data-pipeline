@@ -39,6 +39,10 @@ python load_gold.py                    # (re)create the 11 gold views
 
 ## Architectural constraints (per layer — do not break)
 
+- **Ingestion fails loudly.** A run that loads zero rows on a trading day is a
+  **failure**, not "already up to date": `fetch_stocks.py` retries the source and
+  then **raises** when a weekday window returns no data. Never let an empty fetch
+  exit 0 or pass as success.
 - **Landing** is **dropped and recreated every run** (`db.replace_table`,
   `to_sql(if_exists="replace")`). Any table-level setting — column types, RLS, indexes —
   must be re-applied *in code* after the rebuild, never set once in the DB. RLS is
@@ -60,6 +64,14 @@ python load_gold.py                    # (re)create the 11 gold views
 - **Dimensions**: `dim_ticker` is **upserted** (`ON CONFLICT (ticker) DO UPDATE`). Keep the
   upsert; don't switch to insert-or-truncate.
 
+## Definition of done
+
+- `pytest` is green (`python -m pytest -q`).
+- New behavior has a test — especially anything in the fetch or validation path.
+- Tests run **without a database**: mock the data source and DB, never require a
+  live connection.
+- The architectural constraints above still hold.
+
 ## Data contract
 
 Gold view columns are defined inline in **`load_gold.py`** (the 11 `CREATE OR REPLACE VIEW`
@@ -71,6 +83,16 @@ statements). Treat that file as the source of truth for gold columns. *(A dedica
 - `.github/workflows/` (CI + secrets wiring)
 - Credential handling in `config.py` (the `os.getenv` reads and `get_engine`)
 - `.env`, `.env.example`, or anything touching database/API credentials
+
+## For automated agents
+
+- **Never push to `main` or self-merge.** Work on a branch and open a PR for human
+  review (branch protection enforces this; this states the intent).
+- **Keep fixes minimal and reversible** — diagnose the root cause and change the
+  least code that resolves it.
+- **If the root cause is environmental, not a code bug** (e.g. the data source is
+  unreachable or rate-limiting CI), say so in the PR rather than inventing a code
+  change to paper over it.
 
 ## Security
 
