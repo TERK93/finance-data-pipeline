@@ -16,6 +16,7 @@ Working with financial market data introduces engineering considerations that ge
 - Time-series analytics using SQL window functions
 - Unit tested validation and ingestion logic
 - Automated scheduling via GitHub Actions CI/CD
+- AI agent ready repo structure ('AGENTS.md')
 
 ---
 
@@ -304,6 +305,10 @@ Added rolling 90-day and 180-day standard deviation to `gold_volatility`, enabli
 
 **Symmetric correlation matrix (`gold_correlation_full`)**
 Created a view that mirrors the upper triangle of `gold_correlation` into a full 9×9 matrix including diagonal values (self-correlation = 1.0), making it directly consumable by the Power BI matrix visual with conditional formatting.
+
+**Repo steering for AI coding agents ('AGENTS.md')**
+Added an 'AGENTS.md' documenting per layer architechture rules, build/test commands, 
+and explicity scope boundraries, so AI coding agents (and future contributors) can make changes without breaking layer conventions like Bronze's silent duplicates vs Silver's fail loud behaviour. Docs only, no pipeline logic touched.
 ---
 
 ## Possible Extensions
