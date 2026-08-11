@@ -283,7 +283,7 @@ Added `dockerfile` and `docker-compose.yml` for fully containerised local runs v
 Extracted all database read/write operations into named functions (`get_max_date`, `read_new_rows`, `append_rows`, `replace_table`). Scripts no longer contain raw SQL for data movement.
 
 **Unit tests**
-Added a pytest suite covering `validate_row()` and the data-fetch/reshape logic (20 tests), run without a database using mocked responses.
+Added a pytest suite covering `validate_row()` and the data-fetch/reshape logic (21 tests), run without a database using mocked responses.
 
 **Centralized configuration (`config.py`)**
 Extracted database connection, ticker list and logging setup into a single module. Previously each script duplicated the same environment variable reads and engine creation.
