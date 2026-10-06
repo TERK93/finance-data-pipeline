@@ -26,7 +26,7 @@ DB_NAME     = os.getenv("DB_NAME")
 def get_engine():
     password = quote_plus(DB_PASSWORD)
     return create_engine(
-        f"postgresql://{DB_USER}:{password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        f"postgresql+psycopg2://{DB_USER}:{password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     )
 
 
